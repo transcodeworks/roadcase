@@ -2034,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "roadcase"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "roadcase-bundle",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "roadcase-bundle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "glob",
  "plist",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "roadcase-repo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "roadcase-update"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "minisign",
