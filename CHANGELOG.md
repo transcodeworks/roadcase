@@ -9,3 +9,9 @@ the release pull request from the [conventional commits](https://www.conventiona
 since the last release.
 
 ## [Unreleased]
+
+## [0.1.0](https://github.com/transcodeworks/roadcase/releases/tag/v0.1.0) - 2026-11-17
+
+### Added
+
+- roadcase, packaging, signing and updates for desktop applications
