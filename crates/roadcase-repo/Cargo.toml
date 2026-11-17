@@ -1,0 +1,30 @@
+[package]
+name = "roadcase-repo"
+description = "Signed apt and pacman repositories as static folders, and AUR -bin PKGBUILDs, for Linux packages."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["apt", "pacman", "repository", "aur", "openpgp"]
+categories = ["development-tools::build-utils", "os::linux-apis"]
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22"
+flate2 = "1"
+lzma-rs = "0.3"
+# OpenPGP in Rust (MIT OR Apache-2.0): no gpg, no agent. Without its default
+# bzip2 feature, which only reads old compressed messages.
+pgp = { version = "0.21", default-features = false }
+rand = "0.8"
+ruzstd = "0.9"
+sha2 = "0.10"
+smallvec = "1.10"
+tar = "0.4"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

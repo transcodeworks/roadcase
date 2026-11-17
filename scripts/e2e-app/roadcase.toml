@@ -1,0 +1,75 @@
+# The fixture application of scripts/macos-e2e.sh and scripts/windows-e2e.ps1.
+# The scripts say where things are through the environment, so that the same
+# config packages every version into a folder of the run's own:
+#
+#   FIXTURE_DIR        this folder
+#   FIXTURE_TARGET     cargo's target folder for the fixture
+#   FIXTURE_VERSION    the version to build and package
+#   FIXTURE_FEED       the URL the application asks for updates
+#   FIXTURE_PUBLIC_KEY update.pub's base64 line
+#   FIXTURE_FEED_OUT   the feed folder this release is written into
+
+[app]
+name = "Roadcase Fixture"
+id = "com.example.roadcase-fixture"
+version = { env = "FIXTURE_VERSION" }
+publisher = "Example Inc."
+url_schemes = ["roadcase-fixture"]
+
+[[app.build]]
+run = ["cargo", "build", "--release", "--locked"]
+cwd = "{env:FIXTURE_DIR}"
+env = { CARGO_TARGET_DIR = { env = "FIXTURE_TARGET" } }
+
+[[document_type]]
+name = "Fixture Document"
+extensions = ["rcfixture"]
+role = "editor"
+rank = "owner"
+
+[macos]
+entitlements = "{env:FIXTURE_DIR}/macos/app.entitlements"
+min_system = "11.0"
+
+[macos.executable]
+from = "{env:FIXTURE_TARGET}/release/fixture"
+name = "fixture"
+symbols = true
+
+# The helper: entitlements of its own, an identifier of its own, symbols kept.
+[[macos.program]]
+name = "fixture-helper"
+from = "{env:FIXTURE_TARGET}/release/fixture-helper"
+entitlements = "{env:FIXTURE_DIR}/macos/helper.entitlements"
+identifier = "{id}.helper"
+symbols = true
+
+[[macos.resource]]
+from = "{env:FIXTURE_DIR}/docs/*.md"
+to = "Resources/docs"
+
+[macos.dmg]
+[macos.update_archive]
+[macos.symbols]
+
+[windows.executable]
+from = "{env:FIXTURE_TARGET}/release/fixture.exe"
+name = "fixture.exe"
+
+[[windows.program]]
+name = "fixture-helper.exe"
+from = "{env:FIXTURE_TARGET}/release/fixture-helper.exe"
+
+[[windows.resource]]
+from = "{env:FIXTURE_DIR}/docs"
+to = "resources"
+
+[windows.nsis]
+script = "{env:FIXTURE_DIR}/../../examples/helper-app/packaging/windows/installer.nsi"
+
+[feed]
+url = { env = "FIXTURE_FEED" }
+public_key = { env = "FIXTURE_PUBLIC_KEY" }
+out = "{env:FIXTURE_FEED_OUT}"
+notes = { env = "FIXTURE_NOTES", default = "" }
+build_env = { url = "FIXTURE_FEED", key = "FIXTURE_PUBLIC_KEY" }

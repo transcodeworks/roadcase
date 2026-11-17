@@ -1,0 +1,21 @@
+# The application scripts/macos-e2e.sh and scripts/windows-e2e.ps1 package,
+# publish and update: a main program and a helper beside it. Not a member of
+# the repository's workspace.
+[package]
+name = "roadcase-e2e-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "fixture"
+path = "src/main.rs"
+
+[[bin]]
+name = "fixture-helper"
+path = "src/bin/helper.rs"
+
+[dependencies]
+roadcase-update = { path = "../../crates/roadcase-update" }

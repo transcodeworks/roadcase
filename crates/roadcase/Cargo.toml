@@ -1,0 +1,39 @@
+[package]
+name = "roadcase"
+description = "Packages desktop applications and publishes their signed updates."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["packaging", "installer", "updater", "notarization", "appimage"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+publish.workspace = true
+
+[[bin]]
+name = "roadcase"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+roadcase-bundle = { workspace = true }
+roadcase-repo = { workspace = true }
+roadcase-update = { workspace = true, features = ["sign"] }
+# No-echo password prompts; minisign already depends on it.
+rpassword = "7.5"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# cargo-binstall: the archives the release workflow attaches to each release,
+# one per target, with the program at their root.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"

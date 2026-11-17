@@ -1,0 +1,28 @@
+[package]
+name = "roadcase-bundle"
+description = "Config-driven packaging of desktop applications: macOS bundles, disk images and notarization, Windows NSIS installers, Linux AppImages, .deb and pacman packages."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["packaging", "bundle", "installer", "appimage", "notarization"]
+categories = ["development-tools::build-utils"]
+publish.workspace = true
+
+[dependencies]
+glob = "0.3"
+plist = "1"
+regex = "1"
+# With `sign`: a release publishes its own part of the update feed.
+roadcase-update = { workspace = true, features = ["sign"] }
+semver = "1"
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = "0.9"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,28 @@
+[workspace]
+members = ["crates/roadcase", "crates/roadcase-bundle", "crates/roadcase-repo", "crates/roadcase-update"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/transcodeworks/roadcase"
+homepage = "https://github.com/transcodeworks/roadcase"
+rust-version = "1.88"
+# The one switch for crates.io: `true` when the crates go public (README, Releasing).
+publish = false
+
+[workspace.dependencies]
+roadcase-bundle = { version = "0.1.0", path = "crates/roadcase-bundle" }
+roadcase-repo = { version = "0.1.0", path = "crates/roadcase-repo" }
+roadcase-update = { version = "0.1.0", path = "crates/roadcase-update", default-features = false }
+serde = { version = "1.0.219", features = ["derive"] }
+tempfile = "3"
+thiserror = "2.0.16"
+
+# A secret key's password goes through scrypt, which unoptimized takes tens of
+# seconds for minisign's own parameters; tests and debug builds read keys too.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3

@@ -1,0 +1,295 @@
+name: CI
+
+# Every push and every pull request: formatting, the lints, the tests and the
+# minimum Rust version on Linux, and the dependency checks. A pull request and
+# main also run the tests on macOS and Windows, and the packaging scripts end
+# to end, each on its own system and architecture: nothing is cross-built.
+#
+# No job reads a secret, so a pull request from a fork runs them all.
+
+on:
+  push:
+  pull_request:
+  merge_group:
+
+# A new push to a branch or a pull request cancels its earlier run; runs on
+# main finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # The Rust version every job builds with, except `msrv`. Moved by hand, with
+  # the lints it brings; the release workflow names the same one.
+  RUST_VERSION: "1.99.1"
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Formatting and the lints do not differ between systems, so they run on
+  # Linux only.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy, default features
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy, every feature
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # roadcase-update without its HTTPS transport, as an application with
+      # its own transport builds it.
+      - name: Clippy, roadcase-update without features
+        run: cargo clippy -p roadcase-update --all-targets --no-default-features --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test
+        run: cargo test --workspace --all-features --locked
+
+  # The oldest Rust the crates promise to build with (`rust-version` in
+  # Cargo.toml), read from there.
+  msrv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The minimum Rust version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check with Rust ${{ steps.msrv.outputs.version }}
+        run: cargo check --workspace --all-features --locked
+
+  # Advisories, licences, bans and sources (deny.toml), then each crate
+  # packaged as crates.io would receive it.
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check dependencies
+        run: cargo deny check
+      # The release workflow runs `cargo publish --workspace`; this catches a
+      # manifest it would refuse, without building each crate. While the
+      # crates are `publish = false`, cargo cannot package one that depends on
+      # another, so this copy is packaged as if they were public.
+      - name: Package the crates
+        run: |
+          sed -i 's/^publish = false$/publish = true/' Cargo.toml
+          cargo package --workspace --locked --no-verify --allow-dirty
+
+  # The workspace's tests on macOS and Windows, on a pull request and on
+  # main: these runners cost several times a Linux one. Then each system's
+  # packaging script, end to end, when the repository has one.
+  test-os:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: blacksmith-4vcpu-windows-2025
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test
+        run: cargo test --workspace --all-features --locked
+      # scripts/macos-e2e.sh and scripts/windows-e2e.sh (or .ps1) run here as
+      # soon as they exist; a script says itself what it needs installed.
+      - name: Package end to end (macOS)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          if [ -f scripts/macos-e2e.sh ]; then
+            bash scripts/macos-e2e.sh
+          else
+            echo "::notice::scripts/macos-e2e.sh does not exist yet: nothing is packaged end to end on macOS."
+          fi
+      - name: Package end to end (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          if [ -f scripts/windows-e2e.sh ]; then
+            bash scripts/windows-e2e.sh
+          elif [ -f scripts/windows-e2e.ps1 ]; then
+            pwsh -NoProfile -File scripts/windows-e2e.ps1
+          else
+            echo "::notice::scripts/windows-e2e.sh does not exist yet: nothing is packaged end to end on Windows."
+          fi
+
+  # scripts/linux-e2e.sh: an AppImage that updates itself, on each
+  # architecture's own runner. The runners have no FUSE 2, so AppImages are
+  # extracted and run.
+  e2e-appimage:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    name: e2e AppImage (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: e2e-appimage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install what the script checks with
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 binutils desktop-file-utils shared-mime-info
+      - name: AppImage, end to end
+        run: scripts/linux-e2e.sh
+
+  # scripts/deb-e2e.sh: a .deb installed and upgraded by apt from a signed
+  # repository, as root in a Debian container of the runner's architecture.
+  e2e-deb:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    name: e2e deb (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    container:
+      image: rust:1.99.1-trixie
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install what the script needs
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3 curl dpkg-dev desktop-file-utils shared-mime-info
+      - name: Debian package and apt repository, end to end
+        run: scripts/deb-e2e.sh
+
+  # scripts/pacman-e2e.sh: a pacman package from makepkg, installed and
+  # upgraded by pacman from a signed repository, and the AUR -bin package, as
+  # root in an Arch Linux container. The official image is x86_64 and so is
+  # the runner: the script builds and runs natively, with pacman's sandbox on.
+  e2e-pacman:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    name: e2e pacman (x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install what the script needs
+        run: >-
+          pacman -Syu --noconfirm --needed
+          base-devel git rust python curl desktop-file-utils shared-mime-info
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pacman package, repository and AUR package, end to end
+        run: scripts/pacman-e2e.sh
+
+  # The one check a merge waits for: it fails if a job failed or was
+  # cancelled, and passes when each job passed or was skipped.
+  ci-ok:
+    if: always()
+    needs:
+      - check
+      - test
+      - msrv
+      - deny
+      - test-os
+      - e2e-appimage
+      - e2e-deb
+      - e2e-pacman
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e '[.[] | select(.result != "success" and .result != "skipped")] | length == 0' <<<"$NEEDS" > /dev/null || {
+            echo "::error::A job failed or was cancelled."
+            exit 1
+          }

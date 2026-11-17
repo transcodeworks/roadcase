@@ -1,0 +1,100 @@
+# An application with a File Provider extension and a command-line tool built
+# with Swift, entitlements that name an application group made from the
+# signing team, a launch agent that starts the application in the background
+# at login, and Open With entries for a document type it does not own.
+
+[app]
+name = "Example Drive"
+id = "com.example.drive"
+version = { env = "DRIVE_VERSION", file = "Cargo.toml", regex = '(?m)^version = "(.*)"' }
+publisher = "Example Inc."
+url_schemes = ["exampledrive"]
+
+[[app.build]]
+run = ["cargo", "build", "-p", "example-drive", "--release"]
+
+[[app.build]]
+run = [
+  "xcrun", "swiftc", "-O", "-target", "{apple_arch}-apple-macos13.0", "-swift-version", "5",
+  "-module-name", "example_domains", "macos/Domains/main.swift", "-o", "target/swift/example-domains",
+]
+
+[vars]
+# Entitlements and the extension's Info.plist use it; {team} comes from the
+# signing certificate, or from APPLE_TEAM_ID.
+app_group = "{team}.com.example.drive"
+
+[[document_type]]
+name = "Example Shortcut"
+extensions = ["exlink"]
+role = "viewer"
+rank = "alternate"
+
+[macos]
+entitlements = "macos/App/App.entitlements"
+min_system = "13.0"
+icon = "macos/App/Drive.icns"
+
+[macos.executable]
+from = "target/release/example-drive"
+name = "example-drive"
+
+[macos.signing]
+team = { env = "APPLE_TEAM_ID", default = "" }
+
+# A tool that must run as the application: the application's identifier and
+# entitlements.
+[[macos.program]]
+name = "example-domains"
+from = "target/swift/example-domains"
+entitlements = "macos/App/App.entitlements"
+identifier = "{id}"
+
+[[macos.extension]]
+name = "DriveFileProvider"
+executable = "target/swift/DriveFileProvider"
+info_plist = "macos/FileProvider/Info.plist"
+entitlements = "macos/FileProvider/FileProvider.entitlements"
+plist = { AppGroup = "{app_group}" }
+
+[[macos.extension.build]]
+run = [
+  "xcrun", "swiftc", "-O", "-target", "{apple_arch}-apple-macos13.0", "-swift-version", "5",
+  "-parse-as-library", "-application-extension", "-module-name", "DriveFileProvider",
+  "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain",
+  "macos/FileProvider/Extension.swift", "-o", "target/swift/DriveFileProvider",
+]
+
+[[macos.launch_agent]]
+label = "{id}.agent"
+program = "Contents/MacOS/example-drive"
+arguments = ["example-drive", "--background"]
+run_at_load = true
+
+[macos.dmg]
+applications_link = false
+[macos.notarize]
+[macos.update_archive]
+
+[windows]
+icon = "app/icons/icon.ico"
+
+[windows.executable]
+from = "target/x86_64-pc-windows-msvc/release/example-drive.exe"
+name = "example-drive.exe"
+
+[windows.nsis]
+script = "windows/installer.nsi"
+
+[windows.registry]
+open_command = '"{exe}" --open "%1"'
+url_command = '"{exe}" "%1"'
+
+[windows.sign]
+command = ["artifact-signing-cli", "-e", "{env:AZURE_ENDPOINT}", "-d", "{name}", "{file}"]
+when_env = "AZURE_CLIENT_SECRET"
+
+[feed]
+url = "https://updates.example.com/drive/{channel}/"
+public_key = { env = "DRIVE_UPDATE_KEY", file = "keys/update.pub" }
+build_env = { url = "DRIVE_UPDATE_FEED", key = "DRIVE_UPDATE_KEY" }

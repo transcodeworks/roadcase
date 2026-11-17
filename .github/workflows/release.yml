@@ -1,0 +1,616 @@
+name: Release
+
+# release-plz (release-plz.toml) keeps a release pull request open against
+# main, built from the conventional commits since the last release: one
+# version for the four crates and one CHANGELOG.md. Merging it, and nothing
+# else, releases. In this run:
+#
+# release         tags v<version> and writes its GitHub release, as a draft.
+# binaries        builds the `roadcase` program for each target on that
+#                 target's own system (nothing is cross-built between
+#                 systems), signs and notarizes the macOS ones, signs the
+#                 Windows one, and attaches each as an archive with its
+#                 SHA-256 and a build provenance attestation.
+# github-release  publishes the draft once every archive is attached, so a
+#                 release is never public with a binary missing or unsigned.
+# crates          publishes the crates to crates.io through trusted
+#                 publishing: a short-lived token from this workflow's OIDC
+#                 identity, no stored secret. Only when the repository
+#                 variable PUBLISH_ENABLED is 'true'; README.md, Releasing,
+#                 has the one-time setup that comes first.
+#
+# The repository's secrets. A job that needs one that is not set stops at its
+# first step and names it; set it and run the failed jobs again.
+#   RELEASE_APP_ID             release-pr, release: the GitHub App that opens
+#   RELEASE_APP_PRIVATE_KEY    the pull request and tags the release. With the
+#                              workflow's own token, CI would not run on the
+#                              pull request. Installed on this repository,
+#                              with contents and pull requests: write.
+#   APPLE_CERTIFICATE          macOS: the Developer ID Application identity, a
+#                              .p12 in base64
+#   APPLE_CERTIFICATE_PASSWORD macOS: that .p12's password
+#   APPLE_NOTARY_ID            macOS: the Apple ID notarization submits as
+#   APPLE_NOTARY_PASSWORD      macOS: its app-specific password
+#   APPLE_TEAM_ID              macOS: the team, whose identity the .p12 holds
+#   AZURE_TENANT_ID            Windows: the Microsoft Entra tenant and the app
+#   AZURE_CLIENT_ID            registration that may sign with Azure Artifact
+#   AZURE_CLIENT_SECRET        Signing,
+#   AZURE_ACCOUNT_NAME         the Artifact Signing account
+#   AZURE_CERT_PROFILE_NAME    and its certificate profile
+#
+# The `crates` job runs in the environment `crates-io`, which each crate's
+# trusted publisher on crates.io names with this file, release.yml.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  # As ci.yml.
+  RUST_VERSION: "1.99.1"
+  RELEASE_PLZ_VERSION: "0.4.3"
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  # The Artifact Signing account's regional endpoint: public.
+  AZURE_ENDPOINT: https://eus.codesigning.azure.net
+
+jobs:
+  # Opens the release pull request, or brings it up to date. After `release`,
+  # so that a release just tagged is the one it counts from.
+  release-pr:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      HAS_RELEASE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+      HAS_APPLE: >-
+        ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != ''
+        && secrets.APPLE_NOTARY_ID != '' && secrets.APPLE_NOTARY_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      HAS_AZURE: >-
+        ${{ secrets.AZURE_TENANT_ID != '' && secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_CLIENT_SECRET != ''
+        && secrets.AZURE_ACCOUNT_NAME != '' && secrets.AZURE_CERT_PROFILE_NAME != '' }}
+    steps:
+      # Said here, before anyone merges: the release itself stops on these.
+      - name: Check the release's secrets
+        run: |
+          [ "$HAS_APPLE" = true ] || echo "::warning::An APPLE_* secret is not set: a release would stop before signing the macOS binaries. See the top of release.yml."
+          [ "$HAS_AZURE" = true ] || echo "::warning::An AZURE_* secret is not set: a release would stop before signing the Windows binary. See the top of release.yml."
+          if [ "$HAS_RELEASE_APP" != true ]; then
+            echo "::error::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set: no release pull request can be opened. See the top of release.yml."
+            exit 1
+          fi
+      - name: Mint a token for this repository
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      # The whole history and its tags: the last release is the last v* tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Open or update the release pull request
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release-pr
+          version: ${{ env.RELEASE_PLZ_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+
+  # When this push is the merged release pull request: the tag and the draft
+  # GitHub release. Any other push releases nothing (`release_always = false`).
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      created: ${{ steps.released.outputs.created }}
+      tag: ${{ steps.released.outputs.tag }}
+      version: ${{ steps.released.outputs.version }}
+    env:
+      HAS_RELEASE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Check the release's secrets
+        run: |
+          if [ "$HAS_RELEASE_APP" != true ]; then
+            echo "::error::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set: nothing can be tagged. See the top of release.yml."
+            exit 1
+          fi
+      - name: Mint a token for this repository
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Tag the release
+        id: release-plz
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+          version: ${{ env.RELEASE_PLZ_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+      # The four crates share a version, and only `roadcase` is tagged: the
+      # tag is v<version>, checked against the repository before any build.
+      - name: What was released
+        id: released
+        env:
+          CREATED: ${{ steps.release-plz.outputs.releases_created }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          if [ "$CREATED" != true ]; then
+            echo "Nothing was released."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$RELEASES"
+          version="$(jq -r '(map(select(.package_name == "roadcase")) + .)[0].version' <<<"$RELEASES")"
+          case "$version" in
+            ""|null) echo "::error::release-plz released something without a version: $RELEASES"; exit 1 ;;
+          esac
+          tag="v$version"
+          git fetch --tags --quiet origin
+          git rev-parse --verify --quiet "refs/tags/$tag" > /dev/null || {
+            echo "::error::release-plz reports $version but the tag $tag does not exist."
+            exit 1
+          }
+          {
+            echo "created=true"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  # The `roadcase` program for each target, built on that target's own
+  # system: macOS on Macs of each architecture, Windows on Windows, Linux on
+  # Linux runners of each architecture, linked statically against musl.
+  binaries:
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: blacksmith-4vcpu-windows-2025
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    name: binary (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      VERSION: ${{ needs.release.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      # Before anything is built: a binary is signed or the job fails.
+      - name: Check the macOS signing secrets
+        if: runner.os == 'macOS'
+        env:
+          HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          HAS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+          HAS_APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID != '' }}
+          HAS_APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD != '' }}
+          HAS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID != '' }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_NOTARY_ID APPLE_NOTARY_PASSWORD APPLE_TEAM_ID; do
+            has="HAS_$name"
+            [ "${!has}" = true ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Signing secrets are not set:$missing. Nothing is released unsigned; see the top of release.yml."
+            exit 1
+          fi
+          for tool in xcrun codesign security openssl ditto jq gh; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool is not on the runner."; exit 1; }
+          done
+
+      # Azure answers for the credentials now, before the build: a token for
+      # Artifact Signing, which is discarded. The secret goes on stdin.
+      - name: Check the Windows signing secrets
+        if: runner.os == 'Windows'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_ACCOUNT_NAME: ${{ secrets.AZURE_ACCOUNT_NAME }}
+          AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+        run: |
+          missing=""
+          for name in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_ACCOUNT_NAME AZURE_CERT_PROFILE_NAME; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Signing secrets are not set:$missing. Nothing is released unsigned; see the top of release.yml."
+            exit 1
+          fi
+          reply="$(printf '%s' "$AZURE_CLIENT_SECRET" | curl -sS --fail-with-body \
+            "https://login.microsoftonline.com/$AZURE_TENANT_ID/oauth2/v2.0/token" \
+            --data-urlencode grant_type=client_credentials \
+            --data-urlencode "client_id=$AZURE_CLIENT_ID" \
+            --data-urlencode client_secret@- \
+            --data-urlencode scope=https://codesigning.azure.net/.default)" || {
+            echo "::error::Azure refused AZURE_TENANT_ID, AZURE_CLIENT_ID or AZURE_CLIENT_SECRET: $(sed -n 's/.*"error_description":"\([^"]*\)".*/\1/p' <<<"$reply" | head -c 300)"
+            exit 1
+          }
+          grep -q '"access_token"' <<<"$reply" || { echo "::error::Azure returned no access token."; exit 1; }
+          curl -sS -o /dev/null --max-time 20 "$AZURE_ENDPOINT/" || {
+            echo "::error::$AZURE_ENDPOINT does not answer. It must be the Artifact Signing account's region."
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+
+      # musl's C compiler, for a dependency that compiles C; Rust links the
+      # program with its own copy of musl.
+      - name: Install musl's tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+
+      # No cache: a release is built from nothing but the tag and Cargo.lock.
+      # On Windows the C runtime is linked in, so the program needs no
+      # redistributable installed.
+      - name: Build
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --locked -p roadcase --target "$TARGET"
+          ext=""
+          [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          mkdir -p dist/stage
+          cp "target/$TARGET/release/roadcase$ext" "dist/stage/roadcase$ext"
+          echo "BIN=dist/stage/roadcase$ext" >> "$GITHUB_ENV"
+
+      - name: Check it is statically linked
+        if: runner.os == 'Linux'
+        run: |
+          file "$BIN"
+          file "$BIN" | grep -Eq 'static(ally|-pie) linked' || {
+            echo "::error::$BIN is not statically linked."
+            exit 1
+          }
+
+      # macOS. The identity goes into a keychain of this run, with a random
+      # password, listed beside the user's own keychains so codesign can use
+      # it; the last step deletes it. The secrets reach this step only.
+      - name: Import the Developer ID identity
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"$//' \
+            | grep -vxF "$keychain" > "$RUNNER_TEMP/keychains-before" || true
+          security delete-keychain "$keychain" 2>/dev/null || true
+          umask 077
+          if ! printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12" 2>/dev/null; then
+            echo "::error::APPLE_CERTIFICATE is not base64."
+            exit 1
+          fi
+          password="$(openssl rand -hex 32)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          imported=0
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -f pkcs12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null || imported=$?
+          rm -f "$RUNNER_TEMP/signing.p12"
+          if [ "$imported" -ne 0 ]; then
+            echo "::error::APPLE_CERTIFICATE_PASSWORD does not open APPLE_CERTIFICATE, or it is not a .p12."
+            exit 1
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # Apple's Developer ID intermediates, for a runner whose keychains lack them.
+          for ca in DeveloperIDG2CA DeveloperIDCA; do
+            if curl -fsSL --max-time 30 -o "$RUNNER_TEMP/$ca.cer" "https://www.apple.com/certificateauthority/$ca.cer"; then
+              security import "$RUNNER_TEMP/$ca.cer" -k "$keychain" >/dev/null 2>&1 || true
+            else
+              echo "::warning::Could not fetch Apple's $ca.cer; the runner's own copy must do."
+            fi
+            rm -f "$RUNNER_TEMP/$ca.cer"
+          done
+          keychains=()
+          while IFS= read -r item; do [ -n "$item" ] && keychains+=("$item"); done < "$RUNNER_TEMP/keychains-before"
+          security list-keychains -d user -s "$keychain" "${keychains[@]}"
+          # The team's Developer ID Application identity, from this keychain only, by hash.
+          hash="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n "s/^ *[0-9]*) \([0-9A-F]\{40\}\) \"Developer ID Application: .* ($APPLE_TEAM_ID)\"$/\1/p" | head -n 1)"
+          if [ -z "$hash" ]; then
+            echo "::error::APPLE_CERTIFICATE holds no valid Developer ID Application identity of team APPLE_TEAM_ID."
+            exit 1
+          fi
+          {
+            echo "CODESIGN_IDENTITY=$hash"
+            echo "CODESIGN_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+
+      # Hardened runtime and a secure timestamp, which notarization requires.
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --timestamp --options runtime \
+            --sign "$CODESIGN_IDENTITY" --keychain "$CODESIGN_KEYCHAIN" "$BIN"
+          codesign --verify --strict --verbose=2 "$BIN"
+
+      # Apple notarizes archives, not bare programs: the program goes up in a
+      # zip made for the submission only. A ticket can be stapled to an app, a
+      # disk image or a package, never to a bare program, so Gatekeeper asks
+      # Apple for this one's ticket the first time it runs.
+      - name: Notarize (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          zip="$RUNNER_TEMP/roadcase-notarize.zip"
+          ditto -c -k "$BIN" "$zip"
+          result="$RUNNER_TEMP/notarize.json"
+          submitted=0
+          xcrun notarytool submit "$zip" --apple-id "$APPLE_NOTARY_ID" --password "$APPLE_NOTARY_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait --timeout 45m --output-format json > "$result" || submitted=$?
+          cat "$result" || true
+          status="$(jq -r '.status // empty' "$result" 2>/dev/null || true)"
+          if [ "$submitted" -ne 0 ] || [ "$status" != Accepted ]; then
+            id="$(jq -r '.id // empty' "$result" 2>/dev/null || true)"
+            [ -z "$id" ] || xcrun notarytool log "$id" --apple-id "$APPLE_NOTARY_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            echo "::error::Apple did not notarize the program (status: ${status:-none})."
+            exit 1
+          fi
+          rm -f "$zip" "$result"
+
+      # Windows. The signer other repositories of this organization use,
+      # pinned by version and SHA-256 (the download is an unsigned exe). It
+      # shells out to signtool.exe and az.cmd, which the image has.
+      - name: Install artifact-signing-cli
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ASC_VERSION: "0.11.0"
+          ASC_SHA256: "ddc6f6ef68631bf367ad051d7d37109e58d46095406e1fbba60d553b10f94393"
+        run: |
+          $dest = "$env:RUNNER_TEMP\bin"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $exe = "$dest\artifact-signing-cli.exe"
+          Invoke-WebRequest -Uri "https://github.com/Levminer/artifact-signing-cli/releases/download/$env:ASC_VERSION/artifact-signing-cli.exe" -OutFile $exe
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+          if ($hash -ne $env:ASC_SHA256) {
+            Write-Error "artifact-signing-cli.exe checksum mismatch: expected $env:ASC_SHA256, got $hash"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $dest
+
+      - name: Sign (Windows)
+        if: runner.os == 'Windows'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+        run: artifact-signing-cli -e "${AZURE_ENDPOINT%/}/" -d roadcase "$(cygpath -w "$BIN")"
+
+      # A valid Authenticode signature, or nothing is attached.
+      - name: Check the signature (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature $env:BIN
+          if ($sig.Status -ne "Valid") {
+            Write-Error "$env:BIN is not validly signed: $($sig.Status) $($sig.StatusMessage)"
+            exit 1
+          }
+          "$env:BIN signed by $($sig.SignerCertificate.Subject)"
+
+      # The signed program runs, on the system it was built on, and is the
+      # version being released.
+      - name: Run it
+        run: |
+          "$BIN" --version
+          "$BIN" --version | grep -qF "$VERSION" || {
+            echo "::error::The program does not report version $VERSION."
+            exit 1
+          }
+
+      # roadcase-<target>.tar.gz (.zip on Windows), with the program at its
+      # root beside the licence and the README: the names cargo-binstall is
+      # told in crates/roadcase/Cargo.toml. Beside each, its SHA-256 as
+      # sha256sum writes and checks it.
+      - name: Make the archive
+        id: archive
+        run: |
+          cp LICENSE README.md dist/stage/
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            archive="roadcase-$TARGET.zip"
+            pwsh -NoProfile -Command \
+              "Compress-Archive -Path stage/roadcase.exe, stage/LICENSE, stage/README.md -DestinationPath $archive"
+          else
+            archive="roadcase-$TARGET.tar.gz"
+            tar -czf "$archive" -C stage roadcase LICENSE README.md
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+          cat "$archive.sha256"
+          echo "name=$archive" >> "$GITHUB_OUTPUT"
+
+      # Build provenance: `gh attestation verify <archive> --repo <this one>`.
+      - name: Attest the archive
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ steps.archive.outputs.name }}
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.archive.outputs.name }}
+        run: gh release upload "$TAG" "dist/$ARCHIVE" "dist/$ARCHIVE.sha256" --clobber
+
+      - name: Delete the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          if [ -f "$RUNNER_TEMP/keychains-before" ]; then
+            keychains=()
+            while IFS= read -r item; do [ -n "$item" ] && keychains+=("$item"); done < "$RUNNER_TEMP/keychains-before"
+            security list-keychains -d user -s "${keychains[@]}"
+            rm -f "$RUNNER_TEMP/keychains-before"
+          fi
+          security delete-keychain "$keychain" 2>/dev/null || rm -f "$keychain"
+          rm -f "$RUNNER_TEMP/signing.p12"
+
+  # Every archive and its SHA-256 is attached: the draft becomes the release.
+  github-release:
+    needs: [release, binaries]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - name: Check the release's files
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/names"
+          cat "$RUNNER_TEMP/names"
+          missing=""
+          for name in \
+            roadcase-aarch64-apple-darwin.tar.gz \
+            roadcase-x86_64-apple-darwin.tar.gz \
+            roadcase-x86_64-pc-windows-msvc.zip \
+            roadcase-x86_64-unknown-linux-musl.tar.gz \
+            roadcase-aarch64-unknown-linux-musl.tar.gz; do
+            grep -qxF "$name" "$RUNNER_TEMP/names" || missing="$missing $name"
+            grep -qxF "$name.sha256" "$RUNNER_TEMP/names" || missing="$missing $name.sha256"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::$TAG lacks:$missing. It stays a draft."
+            exit 1
+          fi
+      - name: Publish the release
+        run: gh release edit "$TAG" --draft=false --latest
+
+  # Every crate that is not `publish = false`, in dependency order, after the
+  # GitHub release is public, so the binaries cargo-binstall looks for exist
+  # when the crate does.
+  crates:
+    needs: [release, github-release]
+    if: needs.release.outputs.created == 'true' && vars.PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch @ 2026-08-05
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      # Said before asking crates.io for a token it would refuse to give.
+      - name: Check the crates are public
+        run: |
+          total="$(cargo metadata --locked --no-deps --format-version 1 | jq '[.packages[] | select(.publish != [])] | length')"
+          if [ "$total" -eq 0 ]; then
+            echo "::error::PUBLISH_ENABLED is 'true' but every crate is still 'publish = false' (Cargo.toml, [workspace.package]). See README.md, Releasing."
+            exit 1
+          fi
+      - name: A crates.io token from trusted publishing
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      # Packages, verifies and uploads each crate after the crates it depends
+      # on, waiting for each to appear in the index. A crate whose version is
+      # already in the index is left out, so a rerun after a partial failure
+      # publishes the rest.
+      - name: Publish the crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          exclude=()
+          total=0
+          while IFS= read -r name; do
+            total=$((total + 1))
+            case ${#name} in
+              1) index="https://index.crates.io/1/$name" ;;
+              2) index="https://index.crates.io/2/$name" ;;
+              3) index="https://index.crates.io/3/${name:0:1}/$name" ;;
+              *) index="https://index.crates.io/${name:0:2}/${name:2:2}/$name" ;;
+            esac
+            if curl --silent --fail "$index" | jq -e --arg v "$VERSION" 'select(.vers == $v)' > /dev/null; then
+              echo "$name $VERSION is already published"
+              exclude+=(--exclude "$name")
+            fi
+          done < <(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.publish != []) | .name')
+          if [ "$(( ${#exclude[@]} / 2 ))" -eq "$total" ]; then
+            echo "Every crate of $VERSION is already published"
+            exit 0
+          fi
+          cargo publish --workspace --locked "${exclude[@]}"

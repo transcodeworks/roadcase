@@ -1,0 +1,61 @@
+# release-plz (https://release-plz.dev), run by .github/workflows/release.yml.
+#
+# The four crates share one version, one changelog (CHANGELOG.md), one tag
+# (v<version>) and one GitHub release. release-plz keeps a release pull
+# request open against main, built from the conventional commits since the
+# last tag; merging it tags the release and writes its GitHub release as a
+# draft, which the workflow publishes once every signed binary is attached.
+#
+# release-plz never talks to crates.io: the latest release is the latest tag
+# (`git_only`), and `cargo publish` is the workflow's own job, behind the
+# repository variable PUBLISH_ENABLED (README, Releasing).
+
+[workspace]
+git_only = true
+publish = false
+# A push to main releases nothing by itself: only a merged release pull request does.
+release_always = false
+repo_url = "https://github.com/transcodeworks/roadcase"
+pr_name = "chore: release v{{ version }}"
+# Every crate is found by the one tag; only `roadcase` below creates it.
+git_tag_name = "v{{ version }}"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
+[[package]]
+name = "roadcase"
+version_group = "roadcase"
+git_tag_enable = true
+git_release_enable = true
+git_release_name = "v{{ version }}"
+git_release_draft = true
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = ["roadcase-bundle", "roadcase-repo", "roadcase-update"]
+
+[[package]]
+name = "roadcase-bundle"
+version_group = "roadcase"
+
+[[package]]
+name = "roadcase-repo"
+version_group = "roadcase"
+
+[[package]]
+name = "roadcase-update"
+version_group = "roadcase"
+
+# The changelog keeps what a reader of a release needs: commits about CI, chores,
+# tests, style and the build are left out, unless they break something.
+[changelog]
+protect_breaking_commits = true
+commit_parsers = [
+    { message = "^(ci|chore|test|style|build)(\\(.*\\))?:", skip = true },
+    { message = "^feat", group = "added" },
+    { message = "^changed", group = "changed" },
+    { message = "^deprecated", group = "deprecated" },
+    { message = "^fix", group = "fixed" },
+    { message = "^security", group = "security" },
+    { message = "^.*", group = "other" },
+]

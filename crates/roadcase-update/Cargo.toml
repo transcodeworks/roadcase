@@ -1,0 +1,40 @@
+[package]
+name = "roadcase-update"
+description = "Signed self-updates for desktop applications: a manifest, a download, and the installer, bundle or AppImage swap; desktop integration for AppImages."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["updater", "self-update", "desktop", "appimage", "minisign"]
+categories = ["os", "cryptography"]
+publish.workspace = true
+
+[features]
+default = ["http"]
+# The HTTPS transport. Without it an application supplies its own `Transport`.
+http = ["dep:reqwest"]
+# Making keys and signing manifests: release tooling, never the application.
+sign = ["dep:minisign"]
+
+[dependencies]
+flate2 = "1"
+minisign = { version = "0.10", optional = true }
+minisign-verify = "0.3"
+percent-encoding = "2"
+# Not a shared version: an application that builds reqwest without its default
+# features must not get them back through this crate.
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+semver = { version = "1", features = ["serde"] }
+serde = { workspace = true }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+thiserror = { workspace = true }
+url = "2"
+
+[dev-dependencies]
+minisign = "0.10"
+tempfile = { workspace = true }

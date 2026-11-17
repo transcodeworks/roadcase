@@ -1,0 +1,196 @@
+# An application with helper programs beside its executable, one of which
+# needs different entitlements from the application (it loads third-party
+# plug-ins, so library validation is off for it alone), a bundled manual,
+# document types it owns, a URL scheme, and a test variant that installs
+# beside the real application and claims none of its documents or links.
+# It ships for macOS, Windows, and Linux as an AppImage (x86_64 and aarch64,
+# each packaged on its own architecture).
+
+[app]
+name = "Example Studio"
+id = "com.example.studio"
+version = { env = "STUDIO_VERSION", file = "Cargo.toml", regex = '(?m)^version = "(.*)"' }
+build_number = { env = "STUDIO_BUILD", default = "{version}" }
+publisher = "Example Inc."
+copyright = "Copyright Example Inc."
+url_schemes = ["examplestudio"]
+
+[[app.build]]
+run = ["cargo", "+1.99.1", "build", "--release", "--locked"]
+
+[vars]
+signing_endpoint = { env = "AZURE_ENDPOINT", default = "https://eus.codesigning.azure.net/" }
+
+[[document_type]]
+name = "Example Project"
+extensions = ["exproj"]
+content_types = ["com.example.studio.project"]
+mime_type = "application/x-example-studio-project"
+role = "editor"
+rank = "owner"
+
+[[document_type]]
+name = "Example Venue"
+extensions = ["exvenue"]
+content_types = ["com.example.studio.venue"]
+role = "viewer"
+rank = "owner"
+
+[macos]
+entitlements = "packaging/macos/app.entitlements"
+min_system = "11.0"
+icon = "icons/icon.icns"
+assets_car = "icons/Assets.car"
+icon_name = "AppIcon"
+
+[macos.executable]
+from = "target/release/example-studio"
+symbols = true
+
+[macos.plist]
+NSCameraUsageDescription = "{name} shows live video from the cameras you choose."
+NSMicrophoneUsageDescription = "{name} plays live audio from the inputs you choose."
+NSLocalNetworkUsageDescription = "{name} talks to the other computers of your project on the local network."
+NSBonjourServices = ["_example-studio._tcp"]
+
+[[macos.exported_type]]
+identifier = "com.example.studio.project"
+description = "Example Project"
+conforms_to = ["public.data"]
+extensions = ["exproj"]
+
+[[macos.exported_type]]
+identifier = "com.example.studio.venue"
+description = "Example Venue"
+conforms_to = ["public.data"]
+extensions = ["exvenue"]
+
+# The plug-in host: its own entitlements, and symbols kept.
+[[macos.program]]
+name = "example-plugin-host"
+from = ["binaries/example-plugin-host-{triple}", "binaries/example-plugin-host-universal-apple-darwin"]
+entitlements = "packaging/macos/plugin-host.entitlements"
+symbols = true
+
+# A third-party build that carries no debug information.
+[[macos.program]]
+name = "example-ffmpeg"
+from = ["binaries/example-ffmpeg-{triple}", "binaries/example-ffmpeg-universal-apple-darwin"]
+
+[[macos.resource]]
+from = "docs/*.md"
+to = "Resources/resources/docs"
+
+[macos.dmg]
+[macos.notarize]
+[macos.update_archive]
+[macos.symbols]
+
+[variant.test]
+id = "com.example.studio.test"
+document_rank = "alternate"
+types = "imported"
+url_schemes = []
+
+[windows]
+icon = "icons/icon.ico"
+
+[windows.executable]
+from = "target/x86_64-pc-windows-msvc/release/example-studio.exe"
+
+[[windows.program]]
+name = "example-plugin-host.exe"
+from = "binaries/example-plugin-host-x86_64-pc-windows-msvc.exe"
+
+[[windows.program]]
+name = "example-ffmpeg.exe"
+from = "binaries/example-ffmpeg-x86_64-pc-windows-msvc.exe"
+
+[[windows.resource]]
+from = "docs"
+to = "resources"
+
+[windows.nsis]
+script = "packaging/windows/installer.nsi"
+# An earlier updater restarted the application with /R; the script honours it.
+update_flags = { also_accept = ["/R"] }
+
+[windows.registry]
+open_command = '"{exe}" --open "%1"'
+
+[windows.sign]
+command = ["artifact-signing-cli", "-e", "{signing_endpoint}", "-d", "{name}", "{file}"]
+when_env = "AZURE_CLIENT_SECRET"
+env = { AZURE_ARTIFACT_SIGNING_ACCOUNT = { env = "AZURE_ACCOUNT_NAME" }, AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE = { env = "AZURE_CERT_PROFILE_NAME" } }
+
+[linux]
+icons = ["icons/linux/256.png", "icons/linux/512.png", "icons/linux/icon.svg"]
+categories = ["AudioVideo", "Video"]
+comment = "Plan and run shows with live video and audio"
+# Documents and links arrive as `--open <path or URL>`, as on Windows.
+exec_arguments = ["--open", "%u"]
+metainfo = "packaging/linux/studio.metainfo.xml"
+
+[linux.executable]
+from = "target/release/example-studio"
+symbols = true
+
+[linux.desktop]
+StartupWMClass = "example-studio"
+Keywords = ["show", "cue", "video"]
+
+[[linux.program]]
+name = "example-plugin-host"
+from = "binaries/example-plugin-host-{triple}"
+symbols = true
+
+# The ffmpeg sidecar; its shared libraries, if any, go in usr/lib and it
+# finds them through an rpath of $ORIGIN/../lib.
+[[linux.program]]
+name = "example-ffmpeg"
+from = "binaries/example-ffmpeg-{triple}"
+
+[[linux.resource]]
+from = "docs/*.md"
+to = "usr/share/example-studio/docs"
+
+# The runtime comes from $APPIMAGE_RUNTIME (runtime-x86_64 or
+# runtime-aarch64, from the AppImage project's releases), never downloaded.
+[linux.appimage]
+[linux.symbols]
+
+# The same AppDir as system packages, which apt and pacman update from the
+# application's own repositories (roadcase repo apt, roadcase repo pacman).
+[linux.deb]
+maintainer = "Example Studio <packages@example.com>"
+section = "video"
+homepage = "https://example.com/studio"
+# Added to what dpkg-shlibdeps finds the executables need.
+depends = ["libgtk-3-0"]
+recommends = ["xdg-utils"]
+description = """
+Plan cues and run them live, with video and audio from one window.
+
+Includes the plugin host and an ffmpeg build."""
+
+# The .deb installs the repository as an apt source, so apt upgrade finds the
+# next release.
+[linux.deb.apt_source]
+url = "https://packages.example.com/studio/apt"
+key = "packaging/linux/repository.gpg"
+
+[linux.pacman]
+url = "https://example.com/studio"
+# Where `roadcase repo pacman` publishes the package: a release announces it
+# there in the update feed (the .deb is announced at its apt source, above).
+repository = "https://packages.example.com/studio/arch"
+license = ["MIT"]
+depends = ["gtk3"]
+optdepends = ["xdg-utils: open links"]
+
+[feed]
+url = "https://updates.example.com/studio/{channel}/"
+channel = { env = "STUDIO_CHANNEL", default = "stable" }
+public_key = { env = "STUDIO_UPDATE_KEY", file = "keys/update.pub" }
+notes = { env = "NOTES", default = "" }
+build_env = { url = "STUDIO_UPDATE_FEED", key = "STUDIO_UPDATE_KEY" }

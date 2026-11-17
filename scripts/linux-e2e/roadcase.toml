@@ -1,0 +1,39 @@
+[app]
+name = "Roadcase Fixture"
+id = "com.example.fixture"
+version = { env = "FIXTURE_VERSION" }
+url_schemes = ["roadcase-fixture"]
+
+[[document_type]]
+name = "Fixture Document"
+extensions = ["rcfix"]
+mime_type = "application/x-roadcase-fixture"
+role = "editor"
+rank = "owner"
+
+[linux]
+icons = ["icons/64.png", "icons/icon.svg"]
+categories = ["Utility"]
+comment = "The application roadcase's Linux test packages"
+
+[linux.executable]
+from = "{env:FIXTURE_BIN}"
+symbols = true
+
+[linux.appimage]
+name = "App-{version}-{arch}.AppImage"
+[linux.symbols]
+
+# The same application as system packages, for scripts/deb-e2e.sh and
+# scripts/pacman-e2e.sh. The apt source points at the repository the test
+# serves on 127.0.0.1.
+[linux.deb]
+maintainer = "roadcase tests <tests@example.com>"
+description = "Installs from an apt repository and learns of updates from its feed."
+
+[linux.deb.apt_source]
+url = "{env:FIXTURE_APT_URL}"
+key = "{env:FIXTURE_REPO_KEY}"
+
+[linux.pacman]
+license = ["MIT"]

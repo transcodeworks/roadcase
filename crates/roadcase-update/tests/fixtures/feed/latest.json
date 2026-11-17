@@ -1,0 +1,18 @@
+{
+  "version": "1.2.0",
+  "notes": "What changed.",
+  "artifacts": {
+    "macos-aarch64": {
+      "kind": "app-tar-gz",
+      "url": "Example-1.2.0-aarch64.app.tar.gz",
+      "sha256": "9e691d5adacf0e102f203100842ffaba4e2a7dfe3dbd536827d3c0db8c7e88f1",
+      "size": 10
+    },
+    "windows-x86_64": {
+      "kind": "nsis",
+      "url": "Example%201.2.0%20setup.exe",
+      "sha256": "b2b3a11c02f14e36f2a5c148db1b5924fa96141da4b2fbfb262a469df53f6750",
+      "size": 12
+    }
+  }
+}

@@ -1,0 +1,12 @@
+# The application scripts/linux-e2e.sh packages, publishes and updates. Not a
+# member of the repository's workspace.
+[package]
+name = "roadcase-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+roadcase-update = { path = "../../crates/roadcase-update" }

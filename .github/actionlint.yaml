@@ -1,0 +1,4 @@
+# actionlint's configuration: the runner labels it does not know.
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-windows-2025
