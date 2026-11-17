@@ -17,7 +17,9 @@ publisher = "Example Inc."
 url_schemes = ["roadcase-fixture"]
 
 [[app.build]]
-run = ["cargo", "build", "--release", "--locked"]
+# Not --locked: the fixture takes roadcase-update by path, whose version a
+# release moves, and the fixture's own lock file follows it here.
+run = ["cargo", "build", "--release"]
 cwd = "{env:FIXTURE_DIR}"
 env = { CARGO_TARGET_DIR = { env = "FIXTURE_TARGET" } }
 
