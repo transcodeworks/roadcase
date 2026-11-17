@@ -1,14 +1,19 @@
 name: CI
 
-# Every push and every pull request: formatting, the lints, the tests and the
-# minimum Rust version on Linux, and the dependency checks. A pull request and
-# main also run the tests on macOS and Windows, and the packaging scripts end
-# to end, each on its own system and architecture: nothing is cross-built.
+# Every pull request and every push to main: formatting, the lints, the tests
+# and the minimum Rust version on Linux, the dependency checks, the tests on
+# macOS and Windows, and the packaging scripts end to end, each on its own
+# system and architecture: nothing is cross-built.
+#
+# A branch is checked through its pull request only. A run for the branch's
+# push would skip the other systems and still report ci-ok, which the
+# pull request's required check would accept.
 #
 # No job reads a secret, so a pull request from a fork runs them all.
 
 on:
   push:
+    branches: [main]
   pull_request:
   merge_group:
 
