@@ -10,6 +10,12 @@ since the last release.
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/transcodeworks/roadcase/compare/v0.1.0...v0.1.1) - 2026-11-17
+
+### Added
+
+- *(cli)* roadcase release takes the system it runs on when none is named
+
 ## [0.1.0](https://github.com/transcodeworks/roadcase/releases/tag/v0.1.0) - 2026-11-17
 
 ### Added
