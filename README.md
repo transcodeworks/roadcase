@@ -507,7 +507,7 @@ notarization account, and the Azure Artifact Signing account.
 
 ### Publishing to crates.io
 
-The crates are `publish = false`, and the workflow's `crates` job runs only when the
+The workflow's `crates` job runs only when the
 repository variable `PUBLISH_ENABLED` is `true`. That job publishes through crates.io
 [trusted publishing](https://crates.io/docs/trusted-publishing): a short-lived token from
 the workflow's own identity, no stored secret. crates.io lets a crate name its trusted

@@ -9,8 +9,8 @@ license = "MIT"
 repository = "https://github.com/transcodeworks/roadcase"
 homepage = "https://github.com/transcodeworks/roadcase"
 rust-version = "1.88"
-# The one switch for crates.io: `true` when the crates go public (README, Releasing).
-publish = false
+# The one switch for crates.io (README, Releasing).
+publish = true
 
 [workspace.dependencies]
 roadcase-bundle = { version = "0.1.0", path = "crates/roadcase-bundle" }
