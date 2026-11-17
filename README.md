@@ -113,8 +113,14 @@ cargo install roadcase
 cargo install --git https://github.com/transcodeworks/roadcase roadcase    # the main branch
 ```
 
-Until the crates are on crates.io, only the last line works, and cargo-binstall takes
-`--git https://github.com/transcodeworks/roadcase`.
+In GitHub Actions, [setup-roadcase](https://github.com/transcodeworks/setup-roadcase)
+installs the program, checked against its checksum and attestation, and the tools each
+system needs:
+
+```yaml
+- uses: transcodeworks/setup-roadcase@v1
+- run: roadcase release macos
+```
 
 On macOS you also need Xcode's command-line tools; on Windows, [NSIS](https://nsis.sourceforge.io);
 on Linux, [`appimagetool`](https://github.com/AppImage/appimagetool) on `PATH`, the
