@@ -501,7 +501,7 @@ that needs it, and the release stays a draft until that job is run again. A macO
 cannot carry its notarization ticket (only apps, disk images and packages can be
 stapled), so Gatekeeper asks Apple for it the first time the program runs.
 
-The workflow's header lists the repository secrets it reads: a GitHub App's id and private
+The workflow's header lists the secrets it reads, kept in the environment `release` (usable from `main` only): a GitHub App's id and private
 key (so that CI runs on the release pull request), the Developer ID certificate and
 notarization account, and the Azure Artifact Signing account.
 

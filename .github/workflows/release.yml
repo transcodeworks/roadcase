@@ -19,8 +19,10 @@ name: Release
 #                 variable PUBLISH_ENABLED is 'true'; README.md, Releasing,
 #                 has the one-time setup that comes first.
 #
-# The repository's secrets. A job that needs one that is not set stops at its
-# first step and names it; set it and run the failed jobs again.
+# The secrets of the environment `release`, which only `main` may use: a
+# workflow on another branch cannot read them. A job that needs one that is
+# not set stops at its first step and names it; set it and run the failed
+# jobs again.
 #   RELEASE_APP_ID             release-pr, release: the GitHub App that opens
 #   RELEASE_APP_PRIVATE_KEY    the pull request and tags the release. With the
 #                              workflow's own token, CI would not run on the
@@ -67,6 +69,7 @@ jobs:
     needs: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: release
     permissions:
       contents: read
     env:
@@ -119,6 +122,7 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: release
     permissions:
       contents: read
     outputs:
@@ -213,6 +217,7 @@ jobs:
     name: binary (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    environment: release
     permissions:
       contents: write
       id-token: write
