@@ -110,8 +110,9 @@ enum Command {
     Release {
         #[command(flatten)]
         project: ProjectArgs,
-        /// The system.
-        #[arg(value_enum)]
+        /// The system; the one this runs on when left out. A release is
+        /// only ever made on its own system.
+        #[arg(value_enum, default_value_t = System::host())]
         system: System,
         /// Where the artifacts go.
         #[arg(long, default_value = "target/roadcase")]

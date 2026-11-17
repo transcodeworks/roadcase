@@ -39,7 +39,7 @@ arguments and output, and the password options added; see [roadcase-update](../r
 ```sh
 roadcase check [--config roadcase.toml] [--variant test] [--system macos|windows|linux]
 roadcase app [--config roadcase.toml] [--variant test] [--system macos|linux] [--out target/roadcase] [--build]
-roadcase release macos|windows|linux [--config roadcase.toml] [--variant test] [--out target/roadcase] [--skip-build] [--format appimage|deb|pacman]...
+roadcase release [macos|windows|linux] [--config roadcase.toml] [--variant test] [--out target/roadcase] [--skip-build] [--format appimage|deb|pacman]...
 ```
 
 - `check` reads and validates the config and prints what it resolves to.

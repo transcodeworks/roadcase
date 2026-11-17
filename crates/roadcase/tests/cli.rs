@@ -415,3 +415,14 @@ fn a_deb_is_announced_under_its_own_key() {
         "{manifest}"
     );
 }
+
+#[test]
+fn release_takes_the_system_it_runs_on_when_none_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = roadcase(&["release", "--config", "missing.toml"], dir.path());
+    assert!(!release.status.success());
+    let said = String::from_utf8_lossy(&release.stderr);
+    // The config is what is missing, not an argument.
+    assert!(said.contains("missing.toml"), "{said}");
+    assert!(!said.contains("Usage:"), "{said}");
+}

@@ -119,7 +119,7 @@ system needs:
 
 ```yaml
 - uses: transcodeworks/setup-roadcase@v1
-- run: roadcase release macos
+- run: roadcase release    # for the runner's own system
 ```
 
 On macOS you also need Xcode's command-line tools; on Windows, [NSIS](https://nsis.sourceforge.io);
