@@ -139,7 +139,7 @@ jobs:
           - os: macos
             runner: macos-15
           - os: windows
-            runner: blacksmith-4vcpu-windows-2025
+            runner: windows-2025
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60

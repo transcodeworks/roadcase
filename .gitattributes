@@ -1,0 +1,4 @@
+# Line endings are part of what is signed and compared: keep LF on every system.
+* text=auto eol=lf
+**/tests/fixtures/** -text
+*.ps1 text eol=lf
