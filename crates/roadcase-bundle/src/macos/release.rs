@@ -356,6 +356,45 @@ pub fn hdiutil_command(volume: &str, staging: &Path, dmg: &Path) -> Invocation {
         .path(dmg)
 }
 
+/// Size the destination from logical lengths, not just allocated source blocks:
+/// sparse/compressed files and clones still need room when copied into the image.
+/// Do not follow symlinks (in particular the link to /Applications). Count each
+/// hard link separately, since the destination copy may expand it.
+fn image_size_mib(staging: &Path) -> Result<u64> {
+    fn measured(path: &Path) -> Result<u64> {
+        let metadata = std::fs::symlink_metadata(path).map_err(io(path))?;
+        let mut bytes = metadata.len().div_ceil(4096).saturating_mul(4096);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // Allocated blocks can also include extended attributes/resource forks.
+            bytes = bytes.max(metadata.blocks().saturating_mul(512));
+        }
+        // Directory records, attributes and allocation rounding on the destination.
+        bytes = bytes.saturating_add(4096);
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(path).map_err(io(path))? {
+                let entry = entry.map_err(io(path))?;
+                bytes = bytes.saturating_add(measured(&entry.path())?);
+            }
+        }
+        Ok(bytes)
+    }
+    const MIB: u64 = 1024 * 1024;
+    let bytes = measured(staging)?;
+    // Leave 25% plus 32 MiB for filesystem structures and copy-time overhead.
+    Ok(bytes
+        .saturating_add(bytes / 4)
+        .div_ceil(MIB)
+        .saturating_add(32)
+        .max(64))
+}
+
+fn sized_hdiutil_command(volume: &str, staging: &Path, dmg: &Path) -> Result<Invocation> {
+    Ok(hdiutil_command(volume, staging, dmg)
+        .args(["-size".to_owned(), format!("{}m", image_size_mib(staging)?)]))
+}
+
 /// Makes the disk image with `hdiutil`: the application, and a link to
 /// `/Applications` beside it unless `applications_link` is off; then signs
 /// the image. Make it once the application is stapled.
@@ -395,7 +434,7 @@ pub fn dmg(project: &Project, app: &AppBundle, identity: &Identity, out: &Path) 
         if dmg.exists() {
             std::fs::remove_file(&dmg).map_err(io(&dmg))?;
         }
-        create_image(&hdiutil_command(&volume, &staging, &dmg))?;
+        create_image(&sized_hdiutil_command(&volume, &staging, &dmg)?)?;
         sign_file_command(identity, SignFlags::of(project, identity)?, &dmg).run_all()?;
         Ok(())
     })();
@@ -599,6 +638,30 @@ mod tests {
             Some("2efe2717-52ef-43a5-96dc-0797e4ca1041")
         );
         assert_eq!(json_field(answer, "nope"), None);
+    }
+
+    #[test]
+    fn image_sizing_counts_sparse_files_and_hard_links_without_following_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sparse");
+        std::fs::File::create(&file)
+            .unwrap()
+            .set_len(80 * 1024 * 1024)
+            .unwrap();
+        std::fs::hard_link(&file, dir.path().join("second")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("cycle")).unwrap();
+        let size = image_size_mib(dir.path()).unwrap();
+        assert!(
+            size >= 232,
+            "must fit both expanded files and headroom: {size}"
+        );
+        assert!(size < 240, "must not follow the symlink: {size}");
+        let command = sized_hdiutil_command("Test", dir.path(), Path::new("test.dmg")).unwrap();
+        assert_eq!(
+            &command.arguments[command.arguments.len() - 2..],
+            &["-size".to_owned(), format!("{size}m")]
+        );
     }
 
     #[test]

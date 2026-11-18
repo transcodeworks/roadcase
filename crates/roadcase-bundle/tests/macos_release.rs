@@ -26,6 +26,10 @@ from = "bin/tiny"
 entitlements = "helper.entitlements"
 identifier = "{id}.helper"
 
+[[macos.resource]]
+from = "sparse-resource"
+to = "Resources"
+
 [macos.dmg]
 volume_name = "Tiny"
 [macos.update_archive]
@@ -70,6 +74,11 @@ fn an_ad_hoc_release_signs_images_archives_and_publishes() {
         entitlements("com.apple.security.cs.disable-library-validation"),
     )
     .unwrap();
+    // The image must fit logical file sizes even when the source is sparse.
+    std::fs::File::create(root.join("sparse-resource"))
+        .unwrap()
+        .set_len(80 * 1024 * 1024)
+        .unwrap();
     let options = Options {
         variant: None,
         host: Host::macos(),
@@ -134,6 +143,25 @@ fn an_ad_hoc_release_signs_images_archives_and_publishes() {
     );
     said(Command::new("/usr/bin/codesign").arg("--verify").arg(&dmg));
     said(Command::new("/usr/bin/hdiutil").arg("verify").arg(&dmg));
+
+    let mount = root.join("mounted");
+    said(
+        Command::new("/usr/bin/hdiutil")
+            .args(["attach", "-readonly", "-nobrowse", "-mountpoint"])
+            .arg(&mount)
+            .arg(&dmg),
+    );
+    let resource = std::fs::metadata(mount.join("Tiny App.app/Contents/Resources/sparse-resource"));
+    let link = std::fs::read_link(mount.join("Applications"));
+    let signature = Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(mount.join("Tiny App.app"))
+        .output();
+    // Detach before asserting so a failure does not leave a mounted test image.
+    said(Command::new("/usr/bin/hdiutil").arg("detach").arg(&mount));
+    assert_eq!(resource.unwrap().len(), 80 * 1024 * 1024);
+    assert_eq!(link.unwrap(), std::path::Path::new("/Applications"));
+    assert!(signature.unwrap().status.success());
 
     // The archive holds the signed bundle, and no ._ files.
     let archive = release.update_archive.unwrap();
