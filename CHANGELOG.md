@@ -10,6 +10,12 @@ since the last release.
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/transcodeworks/roadcase/compare/v0.1.1...v0.1.2) - 2026-11-18
+
+### Fixed
+
+- *(macos)* size disk images explicitly with copy headroom ([#7](https://github.com/transcodeworks/roadcase/pull/7))
+
 ### Fixed
 
 - Size macOS disk images explicitly with headroom so `hdiutil` does not run out of space while copying an application.
